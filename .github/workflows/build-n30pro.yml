@@ -1,0 +1,88 @@
+name: Build OpenWrt for Netcore N30 Pro (netcore_n30-pro, PR 24316)
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "Source repository"
+        default: "https://github.com/bfdeh/openwrt.git"
+      branch:
+        description: "Branch"
+        default: "N30PRO-dev"
+      packages:
+        description: "Extra packages (space separated)"
+        default: "luci luci-i18n-base-ru luci-i18n-firewall-ru luci-i18n-package-manager-ru kmod-usb-storage block-mount kmod-mtd-rw"
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang flex bison g++ gawk \
+            gcc-multilib g++-multilib gettext git libncurses5-dev libssl-dev \
+            python3-setuptools python3-dev rsync swig unzip zlib1g-dev file wget
+
+      - name: Clone source
+        run: |
+          git clone --depth 1 --branch "${{ inputs.branch }}" "${{ inputs.repo }}" openwrt
+          git -C openwrt log -1 --format='Source commit: %H (%cd)'
+
+      - name: Check that the N30 Pro profile exists
+        working-directory: openwrt
+        run: |
+          grep -n -A22 "define Device/netcore_n30-pro" target/linux/mediatek/image/filogic.mk
+          grep -n 'label = "lan' target/linux/mediatek/dts/mt7981b-netcore-n30-pro.dts
+
+      - name: Update feeds
+        working-directory: openwrt
+        run: ./scripts/feeds update -a && ./scripts/feeds install -a
+
+      - name: Configure
+        working-directory: openwrt
+        run: |
+          cat > .config <<'EOF'
+          CONFIG_TARGET_mediatek=y
+          CONFIG_TARGET_mediatek_filogic=y
+          CONFIG_TARGET_mediatek_filogic_DEVICE_netcore_n30-pro=y
+          CONFIG_TARGET_ROOTFS_INITRAMFS=y
+          EOF
+          for p in ${{ inputs.packages }}; do echo "CONFIG_PACKAGE_$p=y" >> .config; done
+          make defconfig
+          grep "DEVICE_netcore_n30-pro=y" .config
+          grep "TARGET_ROOTFS_INITRAMFS=y" .config
+
+      - name: Download sources
+        working-directory: openwrt
+        run: make download -j8
+
+      - name: Build
+        working-directory: openwrt
+        run: make -j$(nproc) || make -j1 V=s
+
+      - name: Check results and make checksums
+        working-directory: openwrt/bin/targets/mediatek/filogic
+        run: |
+          ls -la
+          P=openwrt-mediatek-filogic-netcore_n30-pro
+          for f in $P-spim-nand-preloader.bin $P-spim-nand-bl31-uboot.fip \
+                   $P-initramfs.itb $P-squashfs-sysupgrade.itb; do
+            [ -s "$f" ] || { echo "MISSING: $f"; exit 1; }
+          done
+          md5sum $P-* | tee md5sums-n30pro.txt
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: netcore-n30-pro
+          retention-days: 90
+          path: |
+            openwrt/bin/targets/mediatek/filogic/openwrt-mediatek-filogic-netcore_n30-pro-*
+            openwrt/bin/targets/mediatek/filogic/md5sums-n30pro.txt
