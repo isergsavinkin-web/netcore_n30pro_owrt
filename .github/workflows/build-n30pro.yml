@@ -10,8 +10,11 @@ on:
         description: "Branch"
         default: "N30PRO-dev"
       packages:
-        description: "Extra packages (space separated)"
-        default: "luci luci-i18n-base-ru luci-i18n-firewall-ru luci-i18n-package-manager-ru kmod-usb-storage block-mount kmod-mtd-rw"
+        description: "Packages to include in the image (space separated)"
+        default: "luci luci-i18n-base-ru luci-i18n-firewall-ru luci-i18n-package-manager-ru kmod-usb-storage block-mount kmod-mtd-rw kmod-tun kmod-nft-tproxy kmod-nft-socket kmod-inet-diag kmod-netlink-diag sing-box"
+      all_kmods:
+        description: "Also build ALL kernel modules and save them as a separate artifact (true/false)"
+        default: "true"
 
 jobs:
   build:
@@ -54,10 +57,18 @@ jobs:
           CONFIG_TARGET_mediatek_filogic_DEVICE_netcore_n30-pro=y
           CONFIG_TARGET_ROOTFS_INITRAMFS=y
           EOF
+          if [ "${{ inputs.all_kmods }}" = "true" ]; then
+            echo "CONFIG_ALL_KMODS=y" >> .config
+          fi
           for p in ${{ inputs.packages }}; do echo "CONFIG_PACKAGE_$p=y" >> .config; done
           make defconfig
           grep "DEVICE_netcore_n30-pro=y" .config
           grep "TARGET_ROOTFS_INITRAMFS=y" .config
+          missing=0
+          for p in ${{ inputs.packages }}; do
+            grep -q "^CONFIG_PACKAGE_$p=y" .config || { echo "NOT SELECTED: $p"; missing=1; }
+          done
+          [ $missing -eq 0 ] || exit 1
 
       - name: Download sources
         working-directory: openwrt
@@ -76,6 +87,13 @@ jobs:
                    $P-initramfs.itb $P-squashfs-sysupgrade.itb; do
             [ -s "$f" ] || { echo "MISSING: $f"; exit 1; }
           done
+          M=$(ls *n30-pro*.manifest 2>/dev/null | head -1)
+          [ -n "$M" ] || M=$(ls *.manifest | head -1)
+          echo "Manifest: $M"
+          for p in kmod-tun kmod-nft-tproxy kmod-inet-diag kmod-netlink-diag sing-box; do
+            grep -q "^$p " "$M" || { echo "NOT IN IMAGE: $p"; exit 1; }
+          done
+          grep -E "^(kmod-tun|kmod-nft-tproxy|kmod-nft-socket|kmod-inet-diag|kmod-netlink-diag|sing-box) " "$M"
           md5sum $P-* | tee md5sums-n30pro.txt
 
       - name: Upload firmware
@@ -85,4 +103,13 @@ jobs:
           retention-days: 90
           path: |
             openwrt/bin/targets/mediatek/filogic/openwrt-mediatek-filogic-netcore_n30-pro-*
+            openwrt/bin/targets/mediatek/filogic/*.manifest
             openwrt/bin/targets/mediatek/filogic/md5sums-n30pro.txt
+
+      - name: Upload kernel modules
+        if: inputs.all_kmods == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: netcore-n30-pro-kmods
+          retention-days: 90
+          path: openwrt/bin/targets/mediatek/filogic/packages/
