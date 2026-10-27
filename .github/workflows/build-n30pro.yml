@@ -11,7 +11,7 @@ on:
         default: "N30PRO-dev"
       packages:
         description: "Packages to include in the image (space separated)"
-        default: "luci luci-i18n-base-ru luci-i18n-firewall-ru luci-i18n-package-manager-ru kmod-usb-storage block-mount kmod-mtd-rw kmod-tun kmod-nft-tproxy kmod-nft-socket kmod-inet-diag kmod-netlink-diag sing-box"
+        default: "luci luci-i18n-base-ru luci-i18n-firewall-ru luci-i18n-package-manager-ru kmod-mtd-rw kmod-tun kmod-nft-tproxy kmod-nft-socket kmod-inet-diag kmod-netlink-diag sing-box kmod-wireguard wireguard-tools luci-proto-wireguard kmod-usb-storage kmod-usb-storage-uas block-mount usbutils kmod-fs-vfat kmod-fs-exfat kmod-fs-ext4 kmod-fs-ntfs3 kmod-nls-cp437 kmod-nls-iso8859-1 kmod-nls-utf8 e2fsprogs kmod-usb-net-cdc-ether kmod-usb-net-rndis kmod-usb-net-cdc-ncm kmod-usb-net-huawei-cdc-ncm kmod-usb-net-cdc-mbim kmod-usb-net-qmi-wwan kmod-usb-net-ipheth kmod-usb-serial-option kmod-usb-serial-wwan kmod-usb-acm usb-modeswitch uqmi umbim comgt comgt-ncm usbmuxd luci-proto-3g luci-proto-ncm luci-proto-qmi luci-proto-mbim luci-proto-modemmanager modemmanager"
       all_kmods:
         description: "Also build ALL kernel modules and save them as a separate artifact (true/false)"
         default: "true"
@@ -47,6 +47,56 @@ jobs:
       - name: Update feeds
         working-directory: openwrt
         run: ./scripts/feeds update -a && ./scripts/feeds install -a
+
+      - name: Add first-boot defaults (GS Router)
+        working-directory: openwrt
+        run: |
+          mkdir -p files/etc/uci-defaults
+          cat > files/etc/uci-defaults/99-gs-defaults <<'EOF'
+          #!/bin/sh
+          # Runs once on first boot and again after every factory reset.
+
+          uci set system.@system[0].hostname='GS-Router'
+          uci set system.@system[0].zonename='Europe/Moscow'
+          uci set system.@system[0].timezone='MSK-3'
+          uci commit system
+
+          uci set luci.main.lang='ru'
+          uci commit luci
+
+          [ -s /etc/config/wireless ] || wifi config
+
+          found=0
+          for r in $(uci -q show wireless | sed -n "s/^wireless\.\([^.]*\)=wifi-device$/\1/p"); do
+            case "$(uci -q get wireless.$r.band)" in
+              2g) ssid='GS Router 2,4g' ;;
+              5g) ssid='GS Router 5g' ;;
+              *) continue ;;
+            esac
+            found=1
+            uci set wireless.$r.disabled='0'
+            uci set wireless.$r.country='RU'
+            uci set wireless.$r.channel='auto'
+            iface=$(uci -q show wireless | sed -n "s/^wireless\.\([^.]*\)\.device='$r'$/\1/p" | head -n1)
+            if [ -z "$iface" ]; then
+              iface=$(uci add wireless wifi-iface)
+              uci set wireless.$iface.device="$r"
+              uci set wireless.$iface.network='lan'
+              uci set wireless.$iface.mode='ap'
+            fi
+            uci set wireless.$iface.ssid="$ssid"
+            uci set wireless.$iface.encryption='none'
+            uci -q delete wireless.$iface.key
+            uci set wireless.$iface.disabled='0'
+          done
+          uci commit wireless
+
+          # No radios found yet: keep this script and retry on next boot
+          [ "$found" = 1 ] || exit 1
+          exit 0
+          EOF
+          chmod +x files/etc/uci-defaults/99-gs-defaults
+          cat files/etc/uci-defaults/99-gs-defaults
 
       - name: Configure
         working-directory: openwrt
