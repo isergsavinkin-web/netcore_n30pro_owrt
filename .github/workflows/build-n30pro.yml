@@ -77,7 +77,10 @@ jobs:
 
       - name: Build
         working-directory: openwrt
-        run: make -j$(nproc) || make -j1 V=s
+        run: |
+          # IGNORE_ERRORS="n m": optional modules (=m, from "all kmods") that fail to build
+          # are skipped, like on the official buildbots. Packages in the image (=y) must build.
+          make -j$(nproc) IGNORE_ERRORS="n m" || make -j1 V=s IGNORE_ERRORS="n m"
 
       - name: Check results and make checksums
         working-directory: openwrt/bin/targets/mediatek/filogic
