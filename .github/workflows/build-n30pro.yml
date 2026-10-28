@@ -44,6 +44,18 @@ jobs:
           grep -n -A22 "define Device/netcore_n30-pro" target/linux/mediatek/image/filogic.mk
           grep -n 'label = "lan' target/linux/mediatek/dts/mt7981b-netcore-n30-pro.dts
 
+      - name: Add libffi to core if missing (moved from packages feed on 2026-10-19)
+        working-directory: openwrt
+        run: |
+          if [ -d package/libs/libffi ]; then
+            echo "libffi already in core"
+          else
+            git clone -q --depth 1 --filter=blob:none --sparse https://github.com/openwrt/openwrt.git /tmp/owrt-main
+            git -C /tmp/owrt-main sparse-checkout set --no-cone /package/libs/libffi/
+            cp -r /tmp/owrt-main/package/libs/libffi package/libs/
+            ls -la package/libs/libffi
+          fi
+
       - name: Update feeds
         working-directory: openwrt
         run: ./scripts/feeds update -a && ./scripts/feeds install -a
