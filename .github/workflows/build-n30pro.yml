@@ -73,7 +73,7 @@ jobs:
           uci set system.@system[0].timezone='MSK-3'
           uci commit system
 
-          uci set luci.main.lang='ru'
+          uci set luci.main.lang='en'
           uci commit luci
 
           [ -s /etc/config/wireless ] || wifi config
@@ -109,6 +109,18 @@ jobs:
           EOF
           chmod +x files/etc/uci-defaults/99-gs-defaults
           cat files/etc/uci-defaults/99-gs-defaults
+
+          # Replace the sing-box package's example config (shadowsocks on 0.0.0.0:8080),
+          # which collides with space-link-api on 127.0.0.1:8080 and makes sing-box crash-loop.
+          mkdir -p files/etc/sing-box
+          cat > files/etc/sing-box/config.json <<'EOF'
+          {
+            "log": { "level": "warn" },
+            "inbounds": [],
+            "outbounds": [ { "type": "direct", "tag": "direct" } ]
+          }
+          EOF
+          python3 -m json.tool files/etc/sing-box/config.json
 
       - name: Configure
         working-directory: openwrt
